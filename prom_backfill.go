@@ -77,6 +77,11 @@ func main() {
 	isEqual := cmp.Equal(fake, fakeTwo)
 	fmt.Println(isEqual)
 
+	seriesCache := getSeriesCache()
+	seriesOne := seriesCache(fake)
+	fmt.Println(seriesOne)
+	seriesOne = seriesCache(fake)
+	fmt.Println(seriesOne)
 }
 
 func noErr(err error) {
@@ -130,5 +135,37 @@ func randomCnrbt() func() *container_network_receive_bytes_total {
 			randOption(cnrbtOptions.service),
 			rand.Float32(),
 		}
+	}
+}
+
+func getSeriesCache() func(cnrbt *container_network_receive_bytes_total) labels.Labels {
+	seriesCache := map[container_network_receive_bytes_total]labels.Labels{}
+
+	return func(cnrbt *container_network_receive_bytes_total) labels.Labels {
+		cachedSeries, ok := seriesCache[*cnrbt]
+		if ok {
+			return cachedSeries
+		}
+
+		seriesBuilder := labels.NewScratchBuilder(13)
+
+		seriesBuilder.Add("container", cnrbt.Container)
+		seriesBuilder.Add("endpoint", cnrbt.Endpoint)
+		seriesBuilder.Add("id", cnrbt.Id)
+		seriesBuilder.Add("instance", cnrbt.Instance)
+		seriesBuilder.Add("interface", cnrbt.Interface)
+		seriesBuilder.Add("job", cnrbt.Job)
+		seriesBuilder.Add("metrics_path", cnrbt.Metrics_Path)
+		seriesBuilder.Add("name", cnrbt.Name)
+		seriesBuilder.Add("namespace", cnrbt.Namespace)
+		seriesBuilder.Add("node", cnrbt.Node)
+		seriesBuilder.Add("pod", cnrbt.Pod)
+		seriesBuilder.Add("prometheus", cnrbt.Prometheus)
+		seriesBuilder.Add("service", cnrbt.Service)
+
+		series := seriesBuilder.Labels()
+		seriesCache[*cnrbt] = series
+
+		return series
 	}
 }
