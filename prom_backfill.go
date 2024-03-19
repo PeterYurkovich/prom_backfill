@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
@@ -20,21 +21,16 @@ func main() {
 	noErr(err)
 
 	app := db.Appender(context.Background())
-	seriesTwo := labels.NewScratchBuilder(2)
-	seriesTwo.Add("foo", "bar")
-	seriesTwo.Add("doo", "da")
-
-	series := labels.FromStrings("foo", "bar", "doo", "dar")
+	seriesBuilder := labels.NewScratchBuilder(2)
+	seriesBuilder.Add("doo", "da")
+	seriesBuilder.Add("foo", "bar")
+	series := seriesBuilder.Labels()
 
 	ref, err := app.Append(0, series, time.Now().Unix(), 100)
 	noErr(err)
-	refTwo, errTwo := app.Append(0, seriesTwo.Labels(), time.Now().Unix(), 200)
-	noErr(errTwo)
 
 	for i := 0.0; i < 100; i++ {
-		_, err = app.Append(ref, series, time.Now().Unix(), 100+i)
-		noErr(err)
-		_, err = app.Append(refTwo, seriesTwo.Labels(), time.Now().Unix(), 200+i)
+		_, err = app.Append(ref, series, time.Now().Unix()+1000*int64(i), 100+i)
 		noErr(err)
 	}
 
@@ -43,7 +39,7 @@ func main() {
 
 	querier, err := db.Querier(math.MinInt64, math.MaxInt64)
 	noErr(err)
-	ss := querier.Select(context.Background(), false, nil, labels.MustNewMatcher(labels.MatchNotEqual, "foo", "bar"))
+	ss := querier.Select(context.Background(), false, nil, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
 
 	for ss.Next() {
 		series := ss.At()
@@ -68,8 +64,15 @@ func main() {
 	err = db.Close()
 	noErr(err)
 
+	err = os.RemoveAll("tsdb-test")
+	noErr(err)
+
 	fake := randomCNRBT()
 	fmt.Printf("%+v\n", fake)
+
+	fakeTwo := randomCNRBT()
+	isEqual := cmp.Equal(fake, fakeTwo)
+	fmt.Println(isEqual)
 
 }
 
