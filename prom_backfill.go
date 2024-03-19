@@ -2,16 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"math"
 	"math/rand"
 	"os"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
-	"github.com/prometheus/prometheus/tsdb/chunkenc"
 )
 
 func main() {
@@ -22,66 +19,60 @@ func main() {
 	noErr(err)
 
 	app := db.Appender(context.Background())
-	seriesBuilder := labels.NewScratchBuilder(2)
-	seriesBuilder.Add("doo", "da")
-	seriesBuilder.Add("foo", "bar")
-	series := seriesBuilder.Labels()
 
-	ref, err := app.Append(0, series, time.Now().Unix(), 100)
-	noErr(err)
+	cnrbtCache, setCnrbtRef := getSeriesCache()
 
-	for i := 0.0; i < 100; i++ {
-		_, err = app.Append(ref, series, time.Now().Unix()+1000*int64(i), 100+i)
-		noErr(err)
+	startTime := time.Now().Unix() - 1000*60*60*10 // 10 hours ago
+	endTime := time.Now().Unix() - 1000*60*60*9    // 9 hours ago
+	randomCnrbtGenerator := randomCnrbt()
+
+	for i := startTime; i < endTime; i += 1000 * 30 {
+		for j := 0; j < 100; j++ {
+			cnrbt := randomCnrbtGenerator()
+			labels, cachedRef := cnrbtCache(cnrbt)
+			if cachedRef == 0 {
+				newRef, err := app.Append(0, labels, i, 100)
+				noErr(err)
+				setCnrbtRef(cnrbt, newRef)
+			} else {
+				_, err = app.Append(cachedRef, labels, i, 100)
+				noErr(err)
+			}
+		}
 	}
 
 	err = app.Commit()
 	noErr(err)
 
-	querier, err := db.Querier(math.MinInt64, math.MaxInt64)
-	noErr(err)
-	ss := querier.Select(context.Background(), false, nil, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
+	// querier, err := db.Querier(math.MinInt64, math.MaxInt64)
+	// noErr(err)
+	// ss := querier.Select(context.Background(), false, nil, labels.MustNewMatcher(labels.MatchEqual, "container", "container1"))
 
-	for ss.Next() {
-		series := ss.At()
-		fmt.Println("series:", series.Labels().String())
+	// for ss.Next() {
+	// series := ss.At()
+	// fmt.Println("series:", series.Labels().String())
 
-		it := series.Iterator(nil)
-		for it.Next() != chunkenc.ValNone {
-			_, v := it.At()
-			fmt.Println("sample", v)
-		}
+	// it := series.Iterator(nil)
+	// for it.Next() != chunkenc.ValNone {
+	// _, v := it.At()
+	// fmt.Println("sample", v)
+	// }
 
-		fmt.Println("it.Err():", it.Err())
-	}
-	fmt.Println("ss.Err():", ss.Err())
-	ws := ss.Warnings()
-	if len(ws) > 0 {
-		fmt.Println("warnings:", ws)
-	}
-	err = querier.Close()
-	noErr(err)
+	// fmt.Println("it.Err():", it.Err())
+	// }
+	// fmt.Println("ss.Err():", ss.Err())
+	// ws := ss.Warnings()
+	// if len(ws) > 0 {
+	// fmt.Println("warnings:", ws)
+	// }
+	// err = querier.Close()
+	// noErr(err)
 
 	err = db.Close()
 	noErr(err)
 
 	err = os.RemoveAll("tsdb-test")
 	noErr(err)
-
-	faker := randomCnrbt()
-
-	fake := faker()
-	fmt.Printf("%+v\n", fake)
-
-	fakeTwo := faker()
-	isEqual := cmp.Equal(fake, fakeTwo)
-	fmt.Println(isEqual)
-
-	seriesCache := getSeriesCache()
-	seriesOne := seriesCache(fake)
-	fmt.Println(seriesOne)
-	seriesOne = seriesCache(fake)
-	fmt.Println(seriesOne)
 }
 
 func noErr(err error) {
@@ -138,34 +129,41 @@ func randomCnrbt() func() *container_network_receive_bytes_total {
 	}
 }
 
-func getSeriesCache() func(cnrbt *container_network_receive_bytes_total) labels.Labels {
+func getSeriesCache() (func(cnrbt *container_network_receive_bytes_total) (labels.Labels, storage.SeriesRef), func(cnrbt *container_network_receive_bytes_total, ref storage.SeriesRef)) {
 	seriesCache := map[container_network_receive_bytes_total]labels.Labels{}
+	refCache := map[container_network_receive_bytes_total]storage.SeriesRef{}
 
-	return func(cnrbt *container_network_receive_bytes_total) labels.Labels {
-		cachedSeries, ok := seriesCache[*cnrbt]
-		if ok {
-			return cachedSeries
+	return func(cnrbt *container_network_receive_bytes_total) (labels.Labels, storage.SeriesRef) {
+			cachedSeries, ok := seriesCache[*cnrbt]
+			if ok {
+				cachedRef, ok := refCache[*cnrbt]
+				if ok {
+					return cachedSeries, cachedRef
+				}
+				return cachedSeries, 0
+			}
+
+			seriesBuilder := labels.NewScratchBuilder(13)
+
+			seriesBuilder.Add("container", cnrbt.Container)
+			seriesBuilder.Add("endpoint", cnrbt.Endpoint)
+			seriesBuilder.Add("id", cnrbt.Id)
+			seriesBuilder.Add("instance", cnrbt.Instance)
+			seriesBuilder.Add("interface", cnrbt.Interface)
+			seriesBuilder.Add("job", cnrbt.Job)
+			seriesBuilder.Add("metrics_path", cnrbt.Metrics_Path)
+			seriesBuilder.Add("name", cnrbt.Name)
+			seriesBuilder.Add("namespace", cnrbt.Namespace)
+			seriesBuilder.Add("node", cnrbt.Node)
+			seriesBuilder.Add("pod", cnrbt.Pod)
+			seriesBuilder.Add("prometheus", cnrbt.Prometheus)
+			seriesBuilder.Add("service", cnrbt.Service)
+
+			series := seriesBuilder.Labels()
+			seriesCache[*cnrbt] = series
+
+			return series, 0
+		}, func(cnrbt *container_network_receive_bytes_total, ref storage.SeriesRef) {
+			refCache[*cnrbt] = ref
 		}
-
-		seriesBuilder := labels.NewScratchBuilder(13)
-
-		seriesBuilder.Add("container", cnrbt.Container)
-		seriesBuilder.Add("endpoint", cnrbt.Endpoint)
-		seriesBuilder.Add("id", cnrbt.Id)
-		seriesBuilder.Add("instance", cnrbt.Instance)
-		seriesBuilder.Add("interface", cnrbt.Interface)
-		seriesBuilder.Add("job", cnrbt.Job)
-		seriesBuilder.Add("metrics_path", cnrbt.Metrics_Path)
-		seriesBuilder.Add("name", cnrbt.Name)
-		seriesBuilder.Add("namespace", cnrbt.Namespace)
-		seriesBuilder.Add("node", cnrbt.Node)
-		seriesBuilder.Add("pod", cnrbt.Pod)
-		seriesBuilder.Add("prometheus", cnrbt.Prometheus)
-		seriesBuilder.Add("service", cnrbt.Service)
-
-		series := seriesBuilder.Labels()
-		seriesCache[*cnrbt] = series
-
-		return series
-	}
 }
