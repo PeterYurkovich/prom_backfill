@@ -2,76 +2,22 @@ package main
 
 import (
 	"context"
-	"math/rand"
+	"errors"
+	"fmt"
 	"os"
 	"time"
 
-	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/storage"
+	"github.com/go-kit/log"
 	"github.com/prometheus/prometheus/tsdb"
+	tsdb_errors "github.com/prometheus/prometheus/tsdb/errors"
 )
 
 func main() {
-	err := os.Mkdir("tsdb-test", 0700)
+	err := os.Mkdir(".tsdb_test", 0700)
 	noErr(err)
 
-	db, err := tsdb.Open("tsdb-test", nil, nil, tsdb.DefaultOptions(), nil)
-	noErr(err)
-
-	app := db.Appender(context.Background())
-
-	cnrbtCache, setCnrbtRef := getSeriesCache()
-
-	startTime := time.Now().Unix() - 1000*60*60*10 // 10 hours ago
-	endTime := time.Now().Unix() - 1000*60*60*9    // 9 hours ago
-	randomCnrbtGenerator := randomCnrbt()
-
-	for i := startTime; i < endTime; i += 1000 * 30 {
-		for j := 0; j < 100; j++ {
-			cnrbt := randomCnrbtGenerator()
-			labels, cachedRef := cnrbtCache(cnrbt)
-			if cachedRef == 0 {
-				newRef, err := app.Append(0, labels, i, 100)
-				noErr(err)
-				setCnrbtRef(cnrbt, newRef)
-			} else {
-				_, err = app.Append(cachedRef, labels, i, 100)
-				noErr(err)
-			}
-		}
-	}
-
-	err = app.Commit()
-	noErr(err)
-
-	// querier, err := db.Querier(math.MinInt64, math.MaxInt64)
-	// noErr(err)
-	// ss := querier.Select(context.Background(), false, nil, labels.MustNewMatcher(labels.MatchEqual, "container", "container1"))
-
-	// for ss.Next() {
-	// series := ss.At()
-	// fmt.Println("series:", series.Labels().String())
-
-	// it := series.Iterator(nil)
-	// for it.Next() != chunkenc.ValNone {
-	// _, v := it.At()
-	// fmt.Println("sample", v)
-	// }
-
-	// fmt.Println("it.Err():", it.Err())
-	// }
-	// fmt.Println("ss.Err():", ss.Err())
-	// ws := ss.Warnings()
-	// if len(ws) > 0 {
-	// fmt.Println("warnings:", ws)
-	// }
-	// err = querier.Close()
-	// noErr(err)
-
-	err = db.Close()
-	noErr(err)
-
-	err = os.RemoveAll("tsdb-test")
+	createBlocks(".tsdb_test", false)
+	// err = os.RemoveAll("tsdb_test")
 	noErr(err)
 }
 
@@ -81,89 +27,117 @@ func noErr(err error) {
 	}
 }
 
-type container_network_receive_bytes_total struct {
-	Container, Endpoint, Id, Instance, Interface, Job, Metrics_Path, Name, Namespace, Node, Pod, Prometheus, Service string
-	Value                                                                                                            float32
-}
-
-func randomCnrbt() func() *container_network_receive_bytes_total {
-	cnrbtOptions := struct {
-		container, endpoint, id, instance, interface_, job, metricsPath, name, namespace, node, pod, prometheus, service []string
-	}{
-		container:   []string{"container1", "container2", "container3"},
-		endpoint:    []string{"endpoint1", "endpoint2", "endpoint3"},
-		id:          []string{"id1", "id2", "id3"},
-		instance:    []string{"instance1", "instance2", "instance3"},
-		interface_:  []string{"interface1", "interface2", "interface3"},
-		job:         []string{"job1", "job2", "job3"},
-		metricsPath: []string{"metricsPath1", "metricsPath2", "metricsPath3"},
-		name:        []string{"name1", "name2", "name3"},
-		namespace:   []string{"namespace1", "namespace2", "namespace3"},
-		node:        []string{"node1", "node2", "node3"},
-		pod:         []string{"pod1", "pod2", "pod3"},
-		prometheus:  []string{"prometheus1", "prometheus2", "prometheus3"},
-		service:     []string{"service1", "service2", "service3"},
-	}
-
-	randOption := func(slice []string) string {
-		return slice[rand.Intn(len(slice))]
-	}
-
-	return func() *container_network_receive_bytes_total {
-		return &container_network_receive_bytes_total{
-			randOption(cnrbtOptions.container),
-			randOption(cnrbtOptions.endpoint),
-			randOption(cnrbtOptions.id),
-			randOption(cnrbtOptions.instance),
-			randOption(cnrbtOptions.interface_),
-			randOption(cnrbtOptions.job),
-			randOption(cnrbtOptions.metricsPath),
-			randOption(cnrbtOptions.name),
-			randOption(cnrbtOptions.namespace),
-			randOption(cnrbtOptions.node),
-			randOption(cnrbtOptions.pod),
-			randOption(cnrbtOptions.prometheus),
-			randOption(cnrbtOptions.service),
-			rand.Float32(),
+func getCompatibleBlockDuration(maxBlockDuration int64) int64 {
+	blockDuration := tsdb.DefaultBlockDuration
+	if maxBlockDuration > tsdb.DefaultBlockDuration {
+		ranges := tsdb.ExponentialBlockRanges(tsdb.DefaultBlockDuration, 10, 3)
+		idx := len(ranges) - 1 // Use largest range if user asked for something enormous.
+		for i, v := range ranges {
+			if v > maxBlockDuration {
+				idx = i - 1
+				break
+			}
 		}
+		blockDuration = ranges[idx]
 	}
+	return blockDuration
 }
 
-func getSeriesCache() (func(cnrbt *container_network_receive_bytes_total) (labels.Labels, storage.SeriesRef), func(cnrbt *container_network_receive_bytes_total, ref storage.SeriesRef)) {
-	seriesCache := map[container_network_receive_bytes_total]labels.Labels{}
-	refCache := map[container_network_receive_bytes_total]storage.SeriesRef{}
+func createBlocks(outputDir string, quiet bool) (returnErr error) {
+	mint := time.Now().Unix() - 6*24*time.Hour.Milliseconds() // 6 days go
+	maxt := time.Now().Unix() - 5*24*time.Hour.Milliseconds() // 5 days ago
+	maxSamplesInAppender := 5000
+	blockDuration := getCompatibleBlockDuration(2 * time.Hour.Milliseconds())
+	mint = blockDuration * (mint / blockDuration)
 
-	return func(cnrbt *container_network_receive_bytes_total) (labels.Labels, storage.SeriesRef) {
-			cachedSeries, ok := seriesCache[*cnrbt]
-			if ok {
-				cachedRef, ok := refCache[*cnrbt]
-				if ok {
-					return cachedSeries, cachedRef
+	db, err := tsdb.OpenDBReadOnly(outputDir, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		returnErr = tsdb_errors.NewMulti(returnErr, db.Close()).Err()
+	}()
+
+	var wroteHeader = false
+
+	for t := mint; t <= maxt; t += blockDuration {
+		tsUpper := t + blockDuration
+
+		err := func() error {
+			w, err := tsdb.NewBlockWriter(log.NewNopLogger(), outputDir, 2*blockDuration)
+			if err != nil {
+				return fmt.Errorf("block writer: %w", err)
+			}
+			defer func() {
+				err = tsdb_errors.NewMulti(err, w.Close()).Err()
+			}()
+
+			ctx := context.Background()
+			app := w.Appender(ctx)
+			samplesCount := 0
+			cnrbtCache, setCnrbtRef := getSeriesCache()
+			randomCnrbtGenerator := randomCnrbt()
+			for i := t; i < tsUpper; i += 30 * time.Second.Milliseconds() {
+				for j := 0; j < 100; j++ {
+					cnrbt := randomCnrbtGenerator()
+					labels, cachedRef := cnrbtCache(cnrbt)
+					if cachedRef == 0 {
+						newRef, err := app.Append(0, labels, i, 100)
+						noErr(err)
+						setCnrbtRef(cnrbt, newRef)
+					} else {
+						_, err = app.Append(cachedRef, labels, i, 100)
+						noErr(err)
+					}
+
+					samplesCount++
+					if samplesCount < maxSamplesInAppender {
+						continue
+					}
+
+					// If we arrive here, the samples count is greater than the maxSamplesInAppender.
+					// Therefore the old appender is committed and a new one is created.
+					// This prevents keeping too many samples lined up in an appender and thus in RAM.
+					if err := app.Commit(); err != nil {
+						return fmt.Errorf("commit: %w", err)
+					}
+
+					app = w.Appender(ctx)
+					samplesCount = 0
 				}
-				return cachedSeries, 0
 			}
 
-			seriesBuilder := labels.NewScratchBuilder(13)
+			if err := app.Commit(); err != nil {
+				return fmt.Errorf("commit: %w", err)
+			}
 
-			seriesBuilder.Add("container", cnrbt.Container)
-			seriesBuilder.Add("endpoint", cnrbt.Endpoint)
-			seriesBuilder.Add("id", cnrbt.Id)
-			seriesBuilder.Add("instance", cnrbt.Instance)
-			seriesBuilder.Add("interface", cnrbt.Interface)
-			seriesBuilder.Add("job", cnrbt.Job)
-			seriesBuilder.Add("metrics_path", cnrbt.Metrics_Path)
-			seriesBuilder.Add("name", cnrbt.Name)
-			seriesBuilder.Add("namespace", cnrbt.Namespace)
-			seriesBuilder.Add("node", cnrbt.Node)
-			seriesBuilder.Add("pod", cnrbt.Pod)
-			seriesBuilder.Add("prometheus", cnrbt.Prometheus)
-			seriesBuilder.Add("service", cnrbt.Service)
+			block, err := w.Flush(ctx)
+			switch {
+			case err == nil:
+				if quiet {
+					break
+				}
+				blocks, err := db.Blocks()
+				if err != nil {
+					return fmt.Errorf("get blocks: %w", err)
+				}
+				for _, b := range blocks {
+					if b.Meta().ULID == block {
+						printBlocks([]tsdb.BlockReader{b}, !wroteHeader, false)
+						wroteHeader = true
+						break
+					}
+				}
+			case errors.Is(err, tsdb.ErrNoSeriesAppended):
+			default:
+				return fmt.Errorf("flush: %w", err)
+			}
 
-			series := seriesBuilder.Labels()
-			seriesCache[*cnrbt] = series
-
-			return series, 0
-		}, func(cnrbt *container_network_receive_bytes_total, ref storage.SeriesRef) {
-			refCache[*cnrbt] = ref
+			return nil
+		}()
+		if err != nil {
+			return fmt.Errorf("process blocks: %w", err)
 		}
+	}
+	return nil
 }
