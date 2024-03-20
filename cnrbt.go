@@ -55,6 +55,14 @@ func randomCnrbt() func() *container_network_receive_bytes_total {
 	}
 }
 
+func randomizeCnrbtValue(exemplar *container_network_receive_bytes_total) func() *container_network_receive_bytes_total {
+
+	return func() *container_network_receive_bytes_total {
+		exemplar.Value = rand.Float32()
+		return exemplar
+	}
+}
+
 func getSeriesCache() (func(cnrbt *container_network_receive_bytes_total) (labels.Labels, storage.SeriesRef), func(cnrbt *container_network_receive_bytes_total, ref storage.SeriesRef)) {
 	seriesCache := map[container_network_receive_bytes_total]labels.Labels{}
 	refCache := map[container_network_receive_bytes_total]storage.SeriesRef{}

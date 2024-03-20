@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"time"
 
@@ -13,10 +14,32 @@ import (
 )
 
 func main() {
+	argsWithoutProg := os.Args[1:]
+	if len(argsWithoutProg) != 13 {
+		fmt.Println("Usage: prom_backfill <container> <endpoint> <id> <instance> <interface> <job> <metrics_path> <name> <namespace> <node> <pod> <prometheus> <service>")
+		os.Exit(1)
+	}
+	cnrbt := &container_network_receive_bytes_total{
+		Container:    argsWithoutProg[0],
+		Endpoint:     argsWithoutProg[1],
+		Id:           argsWithoutProg[2],
+		Instance:     argsWithoutProg[3],
+		Interface:    argsWithoutProg[4],
+		Job:          argsWithoutProg[5],
+		Metrics_Path: argsWithoutProg[6],
+		Name:         argsWithoutProg[7],
+		Namespace:    argsWithoutProg[8],
+		Node:         argsWithoutProg[9],
+		Pod:          argsWithoutProg[10],
+		Prometheus:   argsWithoutProg[11],
+		Service:      argsWithoutProg[12],
+		Value:        rand.Float32(),
+	}
+
 	err := os.Mkdir(".tsdb_test", 0700)
 	noErr(err)
 
-	createBlocks(".tsdb_test", false)
+	createBlocks(".tsdb_test", false, cnrbt)
 	// err = os.RemoveAll("tsdb_test")
 	noErr(err)
 }
@@ -43,12 +66,13 @@ func getCompatibleBlockDuration(maxBlockDuration int64) int64 {
 	return blockDuration
 }
 
-func createBlocks(outputDir string, quiet bool) (returnErr error) {
-	mint := time.Now().Unix() - 6*24*time.Hour.Milliseconds() // 6 days go
-	maxt := time.Now().Unix() - 5*24*time.Hour.Milliseconds() // 5 days ago
+func createBlocks(outputDir string, quiet bool, cnrbt *container_network_receive_bytes_total) (returnErr error) {
+	mint := time.Now().UnixMilli() - 7*24*time.Hour.Milliseconds() // 7 days go
+	maxt := time.Now().UnixMilli() - 24*time.Hour.Milliseconds()   // 1 days ago
 	maxSamplesInAppender := 5000
 	blockDuration := getCompatibleBlockDuration(2 * time.Hour.Milliseconds())
 	mint = blockDuration * (mint / blockDuration)
+	cnrbtRandomizer := randomizeCnrbtValue(cnrbt)
 
 	db, err := tsdb.OpenDBReadOnly(outputDir, nil)
 	if err != nil {
@@ -76,10 +100,10 @@ func createBlocks(outputDir string, quiet bool) (returnErr error) {
 			app := w.Appender(ctx)
 			samplesCount := 0
 			cnrbtCache, setCnrbtRef := getSeriesCache()
-			randomCnrbtGenerator := randomCnrbt()
+			// randomCnrbtGenerator := randomCnrbt()
 			for i := t; i < tsUpper; i += 30 * time.Second.Milliseconds() {
 				for j := 0; j < 100; j++ {
-					cnrbt := randomCnrbtGenerator()
+					cnrbtRandomizer()
 					labels, cachedRef := cnrbtCache(cnrbt)
 					if cachedRef == 0 {
 						newRef, err := app.Append(0, labels, i, 100)
