@@ -79,6 +79,7 @@ func getSeriesCache() (func(cnrbt *container_network_receive_bytes_total) (label
 
 			seriesBuilder := labels.NewScratchBuilder(13)
 
+			seriesBuilder.Add("__name__", "container_network_receive_bytes_total")
 			seriesBuilder.Add("container", cnrbt.Container)
 			seriesBuilder.Add("endpoint", cnrbt.Endpoint)
 			seriesBuilder.Add("id", cnrbt.Id)
