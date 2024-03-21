@@ -36,11 +36,11 @@ func main() {
 		Value:        rand.Float32(),
 	}
 
-	err := os.Mkdir(".tsdb_test", 0700)
+	err := os.Mkdir("tsdb", 0700)
 	noErr(err)
 
-	createBlocks(".tsdb_test", false, cnrbt)
-	// err = os.RemoveAll("tsdb_test")
+	createBlocks("tsdb", false, cnrbt)
+	err = os.RemoveAll("tsdb")
 	noErr(err)
 }
 
