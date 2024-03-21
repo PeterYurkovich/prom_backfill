@@ -37,10 +37,16 @@ func main() {
 	}
 
 	err := os.Mkdir("tsdb", 0700)
+	defer os.RemoveAll("tsdb")
 	noErr(err)
 
 	createBlocks("tsdb", false, cnrbt)
-	err = os.RemoveAll("tsdb")
+
+	currDir, err := os.Getwd()
+	noErr(err)
+	err = Tar(currDir+"/tsdb", "tsdb")
+	noErr(err)
+	err = Gzip(currDir+"/tsdb/tsdb.tar", "")
 	noErr(err)
 }
 
