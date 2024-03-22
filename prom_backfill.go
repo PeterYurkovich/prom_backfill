@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
+	"os"
 	"time"
 
 	"github.com/go-kit/log"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/tsdb"
 	tsdb_errors "github.com/prometheus/prometheus/tsdb/errors"
 )
@@ -14,44 +17,22 @@ import (
 func main() {
 
 	crnbt_tree := create_cnrbt_tree()
-	otherSeries, err := crnbt_tree.getSeries(nil)
+	allSeries, err := crnbt_tree.getSeries(nil)
 	noErr(err)
-	fmt.Println(otherSeries)
+	fmt.Println(allSeries)
 
-	// argsWithoutProg := os.Args[1:]
-	// if len(argsWithoutProg) != 13 {
-	// 	fmt.Println("Usage: prom_backfill <container> <endpoint> <id> <instance> <interface> <job> <metrics_path> <name> <namespace> <node> <pod> <prometheus> <service>")
-	// 	os.Exit(1)
-	// }
-	// cnrbt := &container_network_receive_bytes_total{
-	// 	Container:    argsWithoutProg[0],
-	// 	Endpoint:     argsWithoutProg[1],
-	// 	Id:           argsWithoutProg[2],
-	// 	Instance:     argsWithoutProg[3],
-	// 	Interface:    argsWithoutProg[4],
-	// 	Job:          argsWithoutProg[5],
-	// 	Metrics_Path: argsWithoutProg[6],
-	// 	Name:         argsWithoutProg[7],
-	// 	Namespace:    argsWithoutProg[8],
-	// 	Node:         argsWithoutProg[9],
-	// 	Pod:          argsWithoutProg[10],
-	// 	Prometheus:   argsWithoutProg[11],
-	// 	Service:      argsWithoutProg[12],
-	// 	Value:        rand.Float32(),
-	// }
+	err = os.Mkdir("tsdb", 0700)
+	defer os.RemoveAll("tsdb")
+	noErr(err)
 
-	// err := os.Mkdir("tsdb", 0700)
-	// defer os.RemoveAll("tsdb")
-	// noErr(err)
+	createBlocks("tsdb", false, allSeries)
 
-	// createBlocks("tsdb", false, cnrbt)
-
-	// currDir, err := os.Getwd()
-	// noErr(err)
-	// err = Tar(currDir+"/tsdb", "tsdb")
-	// noErr(err)
-	// err = Gzip(currDir+"/tsdb/tsdb.tar", "")
-	// noErr(err)
+	currDir, err := os.Getwd()
+	noErr(err)
+	err = Tar(currDir+"/tsdb", "tsdb")
+	noErr(err)
+	err = Gzip(currDir+"/tsdb/tsdb.tar", "")
+	noErr(err)
 }
 
 func noErr(err error) {
@@ -76,13 +57,12 @@ func getCompatibleBlockDuration(maxBlockDuration int64) int64 {
 	return blockDuration
 }
 
-func createBlocks(outputDir string, quiet bool, cnrbt *container_network_receive_bytes_total) (returnErr error) {
+func createBlocks(outputDir string, quiet bool, series []labels.Labels) (returnErr error) {
 	mint := time.Now().UnixMilli() - 7*24*time.Hour.Milliseconds() // 7 days go
 	maxt := time.Now().UnixMilli() - 24*time.Hour.Milliseconds()   // 1 days ago
 	maxSamplesInAppender := 5000
 	blockDuration := getCompatibleBlockDuration(2 * time.Hour.Milliseconds())
 	mint = blockDuration * (mint / blockDuration)
-	cnrbtRandomizer := randomizeCnrbtValue(cnrbt)
 
 	db, err := tsdb.OpenDBReadOnly(outputDir, nil)
 	if err != nil {
@@ -109,18 +89,17 @@ func createBlocks(outputDir string, quiet bool, cnrbt *container_network_receive
 			ctx := context.Background()
 			app := w.Appender(ctx)
 			samplesCount := 0
-			cnrbtCache, setCnrbtRef := getSeriesCache()
-			// randomCnrbtGenerator := randomCnrbt()
+			setSeriesCache, getSeriesCache := getSeriesCache()
 			for i := t; i < tsUpper; i += 30 * time.Second.Milliseconds() {
-				for j := 0; j < 100; j++ {
-					cnrbtRandomizer()
-					labels, cachedRef := cnrbtCache(cnrbt)
-					if cachedRef == 0 {
-						newRef, err := app.Append(0, labels, i, 100)
+				for _, series := range series {
+					ref, ok := getSeriesCache(series)
+					if !ok {
+						newRef, err := app.Append(0, series, i, rand.Float64())
 						noErr(err)
-						setCnrbtRef(cnrbt, newRef)
+						setSeriesCache(series, newRef)
+						continue
 					} else {
-						_, err = app.Append(cachedRef, labels, i, 100)
+						_, err = app.Append(ref, series, i, rand.Float64())
 						noErr(err)
 					}
 
