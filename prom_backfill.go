@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
-	"os"
 	"time"
 
 	"github.com/go-kit/log"
@@ -14,40 +12,46 @@ import (
 )
 
 func main() {
-	argsWithoutProg := os.Args[1:]
-	if len(argsWithoutProg) != 13 {
-		fmt.Println("Usage: prom_backfill <container> <endpoint> <id> <instance> <interface> <job> <metrics_path> <name> <namespace> <node> <pod> <prometheus> <service>")
-		os.Exit(1)
-	}
-	cnrbt := &container_network_receive_bytes_total{
-		Container:    argsWithoutProg[0],
-		Endpoint:     argsWithoutProg[1],
-		Id:           argsWithoutProg[2],
-		Instance:     argsWithoutProg[3],
-		Interface:    argsWithoutProg[4],
-		Job:          argsWithoutProg[5],
-		Metrics_Path: argsWithoutProg[6],
-		Name:         argsWithoutProg[7],
-		Namespace:    argsWithoutProg[8],
-		Node:         argsWithoutProg[9],
-		Pod:          argsWithoutProg[10],
-		Prometheus:   argsWithoutProg[11],
-		Service:      argsWithoutProg[12],
-		Value:        rand.Float32(),
-	}
 
-	err := os.Mkdir("tsdb", 0700)
-	defer os.RemoveAll("tsdb")
+	crnbt_tree := create_cnrbt_tree()
+	otherSeries, err := crnbt_tree.getSeries(nil)
 	noErr(err)
+	fmt.Println(otherSeries)
 
-	createBlocks("tsdb", false, cnrbt)
+	// argsWithoutProg := os.Args[1:]
+	// if len(argsWithoutProg) != 13 {
+	// 	fmt.Println("Usage: prom_backfill <container> <endpoint> <id> <instance> <interface> <job> <metrics_path> <name> <namespace> <node> <pod> <prometheus> <service>")
+	// 	os.Exit(1)
+	// }
+	// cnrbt := &container_network_receive_bytes_total{
+	// 	Container:    argsWithoutProg[0],
+	// 	Endpoint:     argsWithoutProg[1],
+	// 	Id:           argsWithoutProg[2],
+	// 	Instance:     argsWithoutProg[3],
+	// 	Interface:    argsWithoutProg[4],
+	// 	Job:          argsWithoutProg[5],
+	// 	Metrics_Path: argsWithoutProg[6],
+	// 	Name:         argsWithoutProg[7],
+	// 	Namespace:    argsWithoutProg[8],
+	// 	Node:         argsWithoutProg[9],
+	// 	Pod:          argsWithoutProg[10],
+	// 	Prometheus:   argsWithoutProg[11],
+	// 	Service:      argsWithoutProg[12],
+	// 	Value:        rand.Float32(),
+	// }
 
-	currDir, err := os.Getwd()
-	noErr(err)
-	err = Tar(currDir+"/tsdb", "tsdb")
-	noErr(err)
-	err = Gzip(currDir+"/tsdb/tsdb.tar", "")
-	noErr(err)
+	// err := os.Mkdir("tsdb", 0700)
+	// defer os.RemoveAll("tsdb")
+	// noErr(err)
+
+	// createBlocks("tsdb", false, cnrbt)
+
+	// currDir, err := os.Getwd()
+	// noErr(err)
+	// err = Tar(currDir+"/tsdb", "tsdb")
+	// noErr(err)
+	// err = Gzip(currDir+"/tsdb/tsdb.tar", "")
+	// noErr(err)
 }
 
 func noErr(err error) {
