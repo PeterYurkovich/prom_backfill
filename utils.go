@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/alecthomas/units"
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
 )
 
@@ -61,4 +63,17 @@ func getFormatedBytes(bytes int64, humanReadable bool) string {
 		return units.Base2Bytes(bytes).String()
 	}
 	return strconv.FormatInt(bytes, 10)
+}
+
+func getSeriesCache() (func(series labels.Labels, ref storage.SeriesRef), func(series labels.Labels) (storage.SeriesRef, bool)) {
+	refCache := map[string]storage.SeriesRef{}
+
+	return func(series labels.Labels, ref storage.SeriesRef) {
+			stringifiedSeries := fmt.Sprintf("%v", series)
+			refCache[stringifiedSeries] = ref
+		}, func(series labels.Labels) (storage.SeriesRef, bool) {
+			stringifiedSeries := fmt.Sprintf("%v", series)
+			foundValue, ok := refCache[stringifiedSeries]
+			return foundValue, ok
+		}
 }
