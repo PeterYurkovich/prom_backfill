@@ -11,19 +11,11 @@
       "mode": "auto",
       "program": "${fileDirname}",
       "args": [
-        "a",
-        "b",
-        "c",
-        "d",
-        "e",
-        "f",
-        "g",
-        "h",
-        "i",
-        "j",
-        "k",
-        "l",
-        "m"
+        "--start",
+        "14",
+        "--end",
+        "0",
+        "--cnrbt"
       ]
     }
   ]
