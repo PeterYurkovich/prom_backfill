@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"math/rand"
 	"os"
@@ -15,17 +16,40 @@ import (
 )
 
 func main() {
+	start_time_days := flag.Int64("start", 14, "Number of days in the past to start backfilling (default 14 days)")
+	end_time_days := flag.Int64("end", 0, "Number of days in the past to end backfilling (default 0 days [now])")
+	cnrbt := flag.Bool("cnrbt", false, "Use the container_network_receive_bytes_total tree")
+	flag.Parse()
 
-	crnbt_tree := create_cnrbt_tree()
-	allSeries, err := crnbt_tree.getSeries(nil)
-	noErr(err)
-	fmt.Println(allSeries)
+	if *start_time_days < 0 || *end_time_days < 0 {
+		fmt.Println("Start Time and End Time must be positive")
+		os.Exit(1)
+	}
+	if *start_time_days < *end_time_days {
+		fmt.Println("End Time must be greater than Start Time")
+		os.Exit(1)
+	}
 
-	err = os.Mkdir("tsdb", 0700)
+	flag.Parse()
+
+	allSeries := []labels.Labels{}
+	if *cnrbt {
+		crnbt_tree := create_cnrbt_tree()
+		cnrbtSeries, err := crnbt_tree.getSeries(nil)
+		noErr(err)
+		allSeries = append(allSeries, cnrbtSeries...)
+	}
+
+	if len(allSeries) == 0 {
+		fmt.Println("No series selected")
+		os.Exit(1)
+	}
+
+	err := os.Mkdir("tsdb", 0700)
 	defer os.RemoveAll("tsdb")
 	noErr(err)
 
-	createBlocks("tsdb", false, allSeries)
+	createBlocks("tsdb", false, allSeries, *start_time_days, *end_time_days)
 
 	currDir, err := os.Getwd()
 	noErr(err)
@@ -57,9 +81,9 @@ func getCompatibleBlockDuration(maxBlockDuration int64) int64 {
 	return blockDuration
 }
 
-func createBlocks(outputDir string, quiet bool, series []labels.Labels) (returnErr error) {
-	mint := time.Now().UnixMilli() - 7*24*time.Hour.Milliseconds() // 7 days go
-	maxt := time.Now().UnixMilli() - 24*time.Hour.Milliseconds()   // 1 days ago
+func createBlocks(outputDir string, quiet bool, series []labels.Labels, startDay, endDay int64) (returnErr error) {
+	mint := time.Now().UnixMilli() - startDay*24*time.Hour.Milliseconds()
+	maxt := time.Now().UnixMilli() - endDay*24*time.Hour.Milliseconds()
 	maxSamplesInAppender := 5000
 	blockDuration := getCompatibleBlockDuration(2 * time.Hour.Milliseconds())
 	mint = blockDuration * (mint / blockDuration)
@@ -73,6 +97,7 @@ func createBlocks(outputDir string, quiet bool, series []labels.Labels) (returnE
 	}()
 
 	var wroteHeader = false
+	setSeriesCache, getSeriesCache := getSeriesCache()
 
 	for t := mint; t <= maxt; t += blockDuration {
 		tsUpper := t + blockDuration
@@ -89,7 +114,6 @@ func createBlocks(outputDir string, quiet bool, series []labels.Labels) (returnE
 			ctx := context.Background()
 			app := w.Appender(ctx)
 			samplesCount := 0
-			setSeriesCache, getSeriesCache := getSeriesCache()
 			for i := t; i < tsUpper; i += 30 * time.Second.Milliseconds() {
 				for _, series := range series {
 					ref, ok := getSeriesCache(series)
