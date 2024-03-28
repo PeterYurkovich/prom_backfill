@@ -34,7 +34,7 @@ randomDependantTemplate(dependantLabel: string, templateString: string (includin
 
 type node struct {
 	label     string
-	generator func() (string, error)
+	generator func(*node) (string, error)
 	parent    *node
 	children  []*node
 }
@@ -94,7 +94,7 @@ func (current *node) getSeries(parentValue labels.Labels) ([]labels.Labels, erro
 	var labelAndValues []labels.Labels = []labels.Labels{}
 	var labelValueChain labels.Labels
 
-	currentValue, err := current.generator()
+	currentValue, err := current.generator(current)
 	if err != nil {
 		return nil, err
 	}
@@ -116,4 +116,15 @@ func (current *node) getSeries(parentValue labels.Labels) ([]labels.Labels, erro
 		labelAndValues = append(labelAndValues, childLabelAndValues...)
 	}
 	return labelAndValues, nil
+}
+
+func createStaticNodes(label string, values []string) []*node {
+	nodes := []*node{}
+	for _, value := range values {
+		nodes = append(nodes, &node{
+			label:     label,
+			generator: func(*node) (string, error) { return value, nil },
+		})
+	}
+	return nodes
 }
